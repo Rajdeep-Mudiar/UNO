@@ -19,6 +19,7 @@ function LiveMatchContent() {
   const [gameState, setGameState] = useState<PublicGameState | null>(null);
   const [notification, setNotification] = useState<string | null>('Connected to live match! Waiting for your turn...');
   const [scoreResult, setScoreResult] = useState<GameScoreResult | null>(null);
+  const [turnTimerRemaining, setTurnTimerRemaining] = useState<number>(15);
   const [isConnected, setIsConnected] = useState(false);
 
   // Get current player ID
@@ -93,9 +94,9 @@ function LiveMatchContent() {
     };
 
     const handleTimerTick = (data: { seconds: number }) => {
-      // Optional timer notification if low
-      if (data.seconds <= 5 && gameState?.currentPlayerId === (myId || getMyPlayerId())) {
-        setNotification(`⚠️ Turn timer: ${data.seconds}s remaining!`);
+      setTurnTimerRemaining(data.seconds);
+      if (data.seconds <= 4 && gameState?.currentPlayerId === (myId || getMyPlayerId())) {
+        setNotification(`⚠️ Turn timer: only ${data.seconds}s remaining!`);
       }
     };
 
@@ -156,16 +157,17 @@ function LiveMatchContent() {
       type: 'CALL_UNO',
       playerId: effectiveId,
     });
+    setNotification('🔥 You called UNO!');
   };
 
-  const handleCatchUno = () => {
+  const handleCatchUno = (targetId?: string) => {
     if (!gameState) return;
     const socket = getSocket();
     const effectiveId = myId || getMyPlayerId();
 
-    const target = gameState.players.find(
-      (p) => p.id !== effectiveId && p.cardCount === 1 && !p.calledUno
-    );
+    const target = targetId
+      ? gameState.players.find((p) => p.id === targetId)
+      : gameState.players.find((p) => p.id !== effectiveId && p.cardCount === 1 && !p.calledUno);
 
     if (target) {
       socket.emit('game:action', {
@@ -173,6 +175,7 @@ function LiveMatchContent() {
         callerPlayerId: effectiveId,
         targetPlayerId: target.id,
       });
+      setNotification(`🚨 Caught ${target.name} forgetting to say UNO! 2 cards fine applied.`);
     }
   };
 
@@ -242,6 +245,7 @@ function LiveMatchContent() {
         humanPlayerId={effectivePlayerId}
         scoreResult={scoreResult}
         notificationMessage={notification}
+        turnSecondsRemaining={turnTimerRemaining}
         onPlayCard={handlePlayCard}
         onDrawCard={handleDrawCard}
         onCallUno={handleCallUno}

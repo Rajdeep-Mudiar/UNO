@@ -16,6 +16,7 @@ export default function PracticeGamePage() {
   const [authoritativeState, setAuthoritativeState] = useState<GameState | null>(null);
   const [notification, setNotification] = useState<string | null>('Practice match started! Play your cards.');
   const [scoreResult, setScoreResult] = useState<GameScoreResult | null>(null);
+  const [turnTimerRemaining, setTurnTimerRemaining] = useState<number>(15);
   const isBotTurnProcessing = useRef(false);
 
   const initGame = useCallback(() => {
@@ -38,12 +39,30 @@ export default function PracticeGamePage() {
 
     setAuthoritativeState(newGame);
     setScoreResult(null);
+    setTurnTimerRemaining(15);
     setNotification('New match initialized! Match color or number to play.');
   }, []);
 
   useEffect(() => {
     initGame();
   }, [initGame]);
+
+  // Turn timer countdown interval for practice match
+  useEffect(() => {
+    if (!authoritativeState || authoritativeState.phase === 'GAME_OVER') return;
+
+    setTurnTimerRemaining(15);
+    const interval = setInterval(() => {
+      setTurnTimerRemaining((prev) => {
+        if (prev <= 1) {
+          return 15;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [authoritativeState?.currentPlayerIndex, authoritativeState?.turnNumber, authoritativeState?.phase]);
 
   // Handle Bot Turns Automatically
   useEffect(() => {
@@ -162,13 +181,15 @@ export default function PracticeGamePage() {
     }
   };
 
-  const handleCatchUno = () => {
+  const handleCatchUno = (targetId?: string) => {
     if (!authoritativeState) return;
 
-    // Find first opponent who forgot to call UNO
-    const target = authoritativeState.players.find(
-      (p) => p.id !== HUMAN_ID && p.cardCount === 1 && !p.calledUno
-    );
+    // Find target opponent who forgot to call UNO
+    const target = targetId 
+      ? authoritativeState.players.find((p) => p.id === targetId)
+      : authoritativeState.players.find(
+          (p) => p.id !== HUMAN_ID && p.cardCount === 1 && !p.calledUno
+        );
 
     if (target) {
       const result = processAction(authoritativeState, {
@@ -216,6 +237,7 @@ export default function PracticeGamePage() {
         humanPlayerId={HUMAN_ID}
         scoreResult={scoreResult}
         notificationMessage={notification}
+        turnSecondsRemaining={turnTimerRemaining}
         onPlayCard={handlePlayCard}
         onDrawCard={handleDrawCard}
         onCallUno={handleCallUno}

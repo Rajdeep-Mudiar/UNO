@@ -3,13 +3,14 @@
 import React from 'react';
 import { PublicPlayerState } from '@/game-engine/types';
 import { cn } from '@/lib/utils';
-import { Bot, User, Flame } from 'lucide-react';
+import { Bot, User, Flame, AlertOctagon } from 'lucide-react';
 
 interface OpponentSeatProps {
   player: PublicPlayerState;
   isCurrentTurn: boolean;
   position: 'top' | 'left' | 'right';
   currentEmote?: string | null;
+  onCatchUno?: (playerId: string) => void;
 }
 
 export const OpponentSeat: React.FC<OpponentSeatProps> = ({
@@ -17,8 +18,11 @@ export const OpponentSeat: React.FC<OpponentSeatProps> = ({
   isCurrentTurn,
   position,
   currentEmote,
+  onCatchUno,
 }) => {
   const isHorizontal = position === 'top';
+  const hasForgotUno = player.cardCount === 1 && !player.calledUno;
+  const isAvatarUrl = player.avatar && (player.avatar.startsWith('http://') || player.avatar.startsWith('https://') || player.avatar.startsWith('/'));
 
   return (
     <div
@@ -38,14 +42,16 @@ export const OpponentSeat: React.FC<OpponentSeatProps> = ({
       <div className="relative">
         <div
           className={cn(
-            'w-12 h-12 sm:w-14 sm:h-14 rounded-full p-0.5 transition-all duration-300 bg-slate-800 border-2',
+            'w-12 h-12 sm:w-14 sm:h-14 rounded-full p-0.5 transition-all duration-300 bg-slate-800 border-2 overflow-hidden',
             isCurrentTurn
               ? 'border-purple-400 ring-4 ring-purple-500/40 shadow-[0_0_20px_rgba(168,85,247,0.7)] scale-110'
               : 'border-slate-700'
           )}
         >
-          <div className="w-full h-full rounded-full bg-gradient-to-tr from-slate-900 to-slate-800 flex items-center justify-center text-white">
-            {player.isBot ? (
+          <div className="w-full h-full rounded-full bg-gradient-to-tr from-slate-900 to-slate-800 flex items-center justify-center text-white overflow-hidden">
+            {isAvatarUrl ? (
+              <img src={player.avatar} alt={player.name} className="w-full h-full object-cover" />
+            ) : player.isBot ? (
               <Bot className="w-6 h-6 text-emerald-400" />
             ) : (
               <User className="w-6 h-6 text-blue-400" />
@@ -82,10 +88,28 @@ export const OpponentSeat: React.FC<OpponentSeatProps> = ({
 
         {/* Card Count Pill */}
         <div className="mt-1 flex items-center gap-1">
-          <div className="px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800 text-[11px] font-bold text-amber-400 shadow-inner">
+          <div className={cn(
+            'px-2 py-0.5 rounded-md border text-[11px] font-bold shadow-inner transition-colors',
+            hasForgotUno 
+              ? 'bg-red-500/20 border-red-500/50 text-red-300 animate-pulse'
+              : 'bg-slate-900 border-slate-800 text-amber-400'
+          )}>
             🎴 {player.cardCount} {player.cardCount === 1 ? 'card' : 'cards'}
           </div>
         </div>
+
+        {/* Catch UNO Penalty Button (Opponent has 1 card and forgot to call UNO) */}
+        {hasForgotUno && onCatchUno && (
+          <button
+            type="button"
+            onClick={() => onCatchUno(player.id)}
+            className="mt-1.5 px-2.5 py-1 rounded-lg bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white font-black text-[10px] tracking-wider uppercase border border-white shadow-[0_0_15px_rgba(239,68,68,0.9)] animate-bounce flex items-center gap-1 cursor-pointer hover:scale-105 active:scale-95 transition-all z-30"
+            title="Catch player for forgetting to call UNO! (+2 cards fine)"
+          >
+            <AlertOctagon className="w-3 h-3 text-yellow-300 fill-yellow-300" />
+            <span>CATCH! (+2 FINE)</span>
+          </button>
+        )}
       </div>
     </div>
   );

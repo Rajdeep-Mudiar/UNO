@@ -20,10 +20,11 @@ interface GameBoardProps {
   humanPlayerId: string;
   scoreResult: GameScoreResult | null;
   notificationMessage?: string | null;
+  turnSecondsRemaining?: number;
   onPlayCard: (cardId: string, chosenColor?: CardColor, targetSwapPlayerId?: string) => void;
   onDrawCard: () => void;
   onCallUno: () => void;
-  onCatchUno: () => void;
+  onCatchUno: (targetPlayerId?: string) => void;
   onDecideWildChallenge: (challenge: boolean) => void;
   onPlayAgain: () => void;
   onReturnHome: () => void;
@@ -34,6 +35,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
   humanPlayerId,
   scoreResult,
   notificationMessage,
+  turnSecondsRemaining,
   onPlayCard,
   onDrawCard,
   onCallUno,
@@ -106,6 +108,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
             position="top"
             isCurrentTurn={gameState.currentPlayerId === topOpponent.id}
             currentEmote={activeEmotes[topOpponent.id]}
+            onCatchUno={(id) => onCatchUno(id)}
           />
         ) : (
           <div className="h-12" />
@@ -122,6 +125,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
               position="left"
               isCurrentTurn={gameState.currentPlayerId === leftOpponent.id}
               currentEmote={activeEmotes[leftOpponent.id]}
+              onCatchUno={(id) => onCatchUno(id)}
             />
           )}
         </div>
@@ -143,6 +147,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
             pendingDrawCount={gameState.pendingDrawCount}
             isMyTurn={isMyTurn}
             onDrawCard={onDrawCard}
+            turnSecondsRemaining={turnSecondsRemaining}
           />
         </div>
 
@@ -154,6 +159,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
               position="right"
               isCurrentTurn={gameState.currentPlayerId === rightOpponent.id}
               currentEmote={activeEmotes[rightOpponent.id]}
+              onCatchUno={(id) => onCatchUno(id)}
             />
           )}
         </div>
@@ -175,13 +181,13 @@ export const GameBoard: React.FC<GameBoardProps> = ({
             </span>
           </div>
 
-          {/* UNO Button */}
+          {/* UNO Buttons (Call UNO & Catch UNO) */}
           <UnoButton
             canCallUno={gameState.canCallUno}
             canCatchUno={gameState.canCatchUno}
             hasCalledUno={humanPlayer?.calledUno ?? false}
             onCallUno={onCallUno}
-            onCatchUno={onCatchUno}
+            onCatchUno={() => onCatchUno()}
           />
 
           {/* Quick Emotes */}

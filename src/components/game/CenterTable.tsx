@@ -4,7 +4,7 @@ import React from 'react';
 import { Card, CardColor, GameDirection } from '@/game-engine/types';
 import { GameCard } from '@/components/cards/GameCard';
 import { cn } from '@/lib/utils';
-import { RotateCw, RotateCcw, Flame } from 'lucide-react';
+import { RotateCw, RotateCcw, Flame, Timer } from 'lucide-react';
 
 interface CenterTableProps {
   topCard: Card;
@@ -14,6 +14,7 @@ interface CenterTableProps {
   isMyTurn: boolean;
   onDrawCard: () => void;
   drawPileCount?: number;
+  turnSecondsRemaining?: number;
 }
 
 const COLOR_RING_MAP: Record<CardColor, string> = {
@@ -32,6 +33,7 @@ export const CenterTable: React.FC<CenterTableProps> = ({
   isMyTurn,
   onDrawCard,
   drawPileCount = 80,
+  turnSecondsRemaining,
 }) => {
   return (
     <div className="relative flex items-center justify-center p-6 sm:p-10">
@@ -42,18 +44,38 @@ export const CenterTable: React.FC<CenterTableProps> = ({
           COLOR_RING_MAP[currentColor] || COLOR_RING_MAP.WILD
         )}
       >
-        {/* Direction Indicator Badge */}
-        <div className="absolute -top-4 px-3 py-1 rounded-full bg-slate-900 border border-slate-700 text-[11px] font-bold text-slate-300 flex items-center gap-1.5 shadow-md">
-          {direction === 1 ? (
-            <>
-              <RotateCw className="w-3.5 h-3.5 text-purple-400 animate-spin" style={{ animationDuration: '8s' }} />
-              <span>Clockwise</span>
-            </>
-          ) : (
-            <>
-              <RotateCcw className="w-3.5 h-3.5 text-amber-400 animate-spin" style={{ animationDuration: '8s', animationDirection: 'reverse' }} />
-              <span>Counter-Clockwise</span>
-            </>
+        {/* Direction & Live Turn Timer Badges */}
+        <div className="absolute -top-5 flex items-center gap-2">
+          {/* Direction Indicator */}
+          <div className="px-3 py-1 rounded-full bg-slate-900 border border-slate-700 text-[11px] font-bold text-slate-300 flex items-center gap-1.5 shadow-md">
+            {direction === 1 ? (
+              <>
+                <RotateCw className="w-3.5 h-3.5 text-purple-400 animate-spin" style={{ animationDuration: '8s' }} />
+                <span>Clockwise</span>
+              </>
+            ) : (
+              <>
+                <RotateCcw className="w-3.5 h-3.5 text-amber-400 animate-spin" style={{ animationDuration: '8s', animationDirection: 'reverse' }} />
+                <span>Counter-Clockwise</span>
+              </>
+            )}
+          </div>
+
+          {/* Turn Countdown Timer */}
+          {turnSecondsRemaining !== undefined && (
+            <div
+              className={cn(
+                'px-3 py-1 rounded-full border text-[11px] font-black flex items-center gap-1.5 shadow-lg transition-all',
+                turnSecondsRemaining <= 4
+                  ? 'bg-red-500/30 border-red-500 text-red-300 animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.7)] scale-105'
+                  : turnSecondsRemaining <= 8
+                  ? 'bg-amber-500/20 border-amber-500/60 text-amber-300'
+                  : 'bg-purple-950/80 border-purple-500/40 text-purple-300'
+              )}
+            >
+              <Timer className={cn('w-3.5 h-3.5', turnSecondsRemaining <= 4 ? 'text-red-400 animate-bounce' : 'text-purple-400')} />
+              <span>{turnSecondsRemaining}s left</span>
+            </div>
           )}
         </div>
 
