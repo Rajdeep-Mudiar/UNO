@@ -12,11 +12,11 @@ import {
   Check, 
   Copy, 
   Play, 
-  UserPlus,
-  Trash2,
-  AlertCircle,
-  Wifi,
-  WifiOff
+  UserPlus, 
+  Trash2, 
+  AlertCircle, 
+  Wifi, 
+  WifiOff 
 } from 'lucide-react';
 import { DEFAULT_RULES } from '@/game-engine/rules';
 import { GameRuleSet } from '@/game-engine/types';
@@ -56,6 +56,39 @@ interface ServerRoomUpdate {
   rules: GameRuleSet;
   players: LobbyPlayer[];
   inGame: boolean;
+}
+
+// Avatar Renderer Component (Handles Emoji, Text & Image URLs cleanly)
+function PlayerAvatar({ avatar, name, size = 'md' }: { avatar?: string; name?: string; size?: 'sm' | 'md' | 'lg' }) {
+  const isUrl = avatar && (avatar.startsWith('http://') || avatar.startsWith('https://') || avatar.startsWith('/'));
+
+  const sizeClasses = {
+    sm: 'w-8 h-8 text-base',
+    md: 'w-12 h-12 text-2xl',
+    lg: 'w-16 h-16 text-3xl',
+  }[size];
+
+  if (isUrl) {
+    return (
+      <div className={`${sizeClasses} rounded-xl overflow-hidden border border-purple-500/40 bg-slate-900 shrink-0 shadow-inner`}>
+        <img
+          src={avatar}
+          alt={name || 'Player'}
+          className="w-full h-full object-cover"
+          onError={(e) => {
+            // Fallback if image fails to load
+            (e.target as HTMLImageElement).style.display = 'none';
+          }}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className={`${sizeClasses} rounded-xl bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-700 flex items-center justify-center shrink-0 shadow-inner`}>
+      <span>{avatar || '🎮'}</span>
+    </div>
+  );
 }
 
 function RoomsContent() {
@@ -113,6 +146,14 @@ function RoomsContent() {
     const handleConnect = () => {
       setIsConnected(true);
       socket.emit('room:list');
+
+      // Auto-join if code in URL on connect
+      if (initialCode) {
+        socket.emit('room:join', {
+          code: initialCode,
+          player: getCurrentPlayer(),
+        });
+      }
     };
 
     const handleDisconnect = () => {
@@ -134,7 +175,7 @@ function RoomsContent() {
 
     const handleErrorNotification = (payload: { message: string }) => {
       setErrorMessage(payload.message);
-      setTimeout(() => setErrorMessage(''), 4000);
+      setTimeout(() => setErrorMessage(''), 5000);
     };
 
     socket.on('connect', handleConnect);
@@ -147,17 +188,23 @@ function RoomsContent() {
     if (socket.connected) {
       setIsConnected(true);
       socket.emit('room:list');
+      if (initialCode) {
+        socket.emit('room:join', {
+          code: initialCode,
+          player: getCurrentPlayer(),
+        });
+      }
     }
 
-    // If code parameter is in URL on load, attempt join
-    if (initialCode) {
-      socket.emit('room:join', {
-        code: initialCode,
-        player: getCurrentPlayer(),
-      });
-    }
+    // Refresh rooms list periodically
+    const pollInterval = setInterval(() => {
+      if (socket.connected) {
+        socket.emit('room:list');
+      }
+    }, 4000);
 
     return () => {
+      clearInterval(pollInterval);
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
       socket.off('room:list_response', handleRoomList);
@@ -212,7 +259,9 @@ function RoomsContent() {
   const handleToggleReady = () => {
     if (!activeRoom) return;
     const socket = getSocket();
-    const myPlayer = activeRoom.players.find((p) => p.name === (session?.user?.name || localStorage.getItem('uno_player_name')));
+    const myPlayer = activeRoom.players.find(
+      (p) => p.name === (session?.user?.name || localStorage.getItem('uno_player_name'))
+    );
     const currentReady = myPlayer ? myPlayer.isReady : false;
     socket.emit('room:set_ready', { isReady: !currentReady });
   };
@@ -367,9 +416,8 @@ function RoomsContent() {
                         className="glass-panel p-4 rounded-2xl border border-slate-800 bg-slate-950/60 flex flex-col justify-between relative group"
                       >
                         <div className="flex items-start justify-between">
-                          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-700 flex items-center justify-center text-2xl shadow-inner">
-                            {slot.avatar || '🎮'}
-                          </div>
+                          <PlayerAvatar avatar={slot.avatar} name={slot.name} size="md" />
+
                           <div className="flex items-center gap-1">
                             {slot.isHost && (
                               <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-black">
@@ -492,7 +540,7 @@ function RoomsContent() {
                     type="button"
                     onClick={handleStartGame}
                     disabled={activeRoom.players.length < 2}
-                    className="flex items-center gap-2 px-8 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:from-teal-500 text-slate-950 font-black text-xs uppercase tracking-wider shadow-lg shadow-emerald-950/50 hover:scale-105 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex items-center gap-2 px-8 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-black text-xs uppercase tracking-wider shadow-lg shadow-emerald-950/50 hover:scale-105 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Play className="w-4 h-4 fill-current" />
                     Launch Game
@@ -534,9 +582,12 @@ function RoomsContent() {
               <div className="relative flex-1">
                 <input
                   type="text"
-                  placeholder="Enter Room Code (e.g. UNO-1234)"
+                  placeholder="Enter Room Code (e.g. 8523 or UNO-8523)"
                   value={searchCode}
                   onChange={(e) => setSearchCode(e.target.value.toUpperCase())}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleJoinRoom(searchCode);
+                  }}
                   className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2 text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
                 />
               </div>
@@ -544,7 +595,7 @@ function RoomsContent() {
                 type="button"
                 onClick={() => handleJoinRoom(searchCode)}
                 disabled={!searchCode.trim()}
-                className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold transition-colors disabled:opacity-50"
+                className="px-5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold transition-colors disabled:opacity-50 shadow-md hover:scale-105 active:scale-95"
               >
                 Join
               </button>
@@ -562,9 +613,7 @@ function RoomsContent() {
                   <div className="space-y-3">
                     <div className="flex items-start justify-between">
                       <div className="flex items-center gap-2.5">
-                        <div className="w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-xl">
-                          {room.hostAvatar || '👑'}
-                        </div>
+                        <PlayerAvatar avatar={room.hostAvatar} name={room.hostName} size="sm" />
                         <div>
                           <h3 className="text-sm font-bold text-white group-hover:text-purple-300 transition-colors line-clamp-1">
                             {room.name}
@@ -613,7 +662,7 @@ function RoomsContent() {
                       <span className="font-semibold text-slate-200">
                         👥 {room.playerCount} / {room.maxPlayers}
                       </span>
-                      <span className="text-[11px] text-emerald-400 font-mono">Code: {room.code}</span>
+                      <span className="text-[11px] text-amber-400 font-mono font-bold">Code: {room.code}</span>
                     </div>
 
                     <button

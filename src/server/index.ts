@@ -277,32 +277,44 @@ io.on('connection', (socket: Socket) => {
     broadcastRoomState(newRoom);
   });
 
-  // 2. Join Room (By code or roomId)
+  // 2. Join Room (By code or roomId - completely flexible matching)
   socket.on('room:join', (payload: { roomId?: string; code?: string; player: { id: string; name: string; avatar?: string } }) => {
     let targetRoom: ServerRoom | undefined;
 
-    const queryCode = payload.code?.trim().toUpperCase();
+    const rawCode = (payload.code || '').trim();
+    const cleanQuery = rawCode.toUpperCase().replace(/[^0-9A-Z]/g, '');
+    const queryDigits = cleanQuery.replace('UNO', '');
 
     if (payload.roomId) {
       targetRoom = rooms.get(payload.roomId);
-    } else if (queryCode) {
-      targetRoom = Array.from(rooms.values()).find(
-        (r) => r.code.toUpperCase() === queryCode || r.code.replace('UNO-', '') === queryCode.replace('UNO-', '')
-      );
+    }
+
+    if (!targetRoom && cleanQuery) {
+      targetRoom = Array.from(rooms.values()).find((r) => {
+        const cleanRoom = r.code.toUpperCase().replace(/[^0-9A-Z]/g, '');
+        const roomDigits = cleanRoom.replace('UNO', '');
+        return (
+          cleanRoom === cleanQuery ||
+          (queryDigits.length > 0 && roomDigits === queryDigits) ||
+          r.id === payload.code
+        );
+      });
     }
 
     if (!targetRoom) {
-      socket.emit('error:notification', { message: `Room with code "${payload.code}" not found.` });
+      socket.emit('error:notification', { message: `Room with code "${payload.code}" not found. Please verify the code.` });
       return;
     }
 
     if (targetRoom.players.length >= targetRoom.maxPlayers) {
-      socket.emit('error:notification', { message: 'Room is already full.' });
+      socket.emit('error:notification', { message: 'This room is already full.' });
       return;
     }
 
     // Check if player already in room
-    let existingPlayer = targetRoom.players.find((p) => p.socketId === socket.id || (p.id && p.id === payload.player.id));
+    let existingPlayer = targetRoom.players.find(
+      (p) => p.socketId === socket.id || (p.id && p.id === payload.player.id)
+    );
     if (existingPlayer) {
       existingPlayer.socketId = socket.id;
       existingPlayer.name = payload.player.name || existingPlayer.name;
