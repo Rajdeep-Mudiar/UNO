@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardColor, GameDirection } from '@/game-engine/types';
 import { GameCard } from '@/components/cards/GameCard';
 import { cn } from '@/lib/utils';
@@ -35,6 +35,40 @@ export const CenterTable: React.FC<CenterTableProps> = ({
   drawPileCount = 80,
   turnSecondsRemaining,
 }) => {
+  const [animatingCard, setAnimatingCard] = useState<{ id: string; card: Card } | null>(null);
+  const [isImpactActive, setIsImpactActive] = useState(false);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const prevTopCardId = useRef<string>(topCard.id);
+
+  // Trigger 3D throw slam animation whenever top card changes
+  useEffect(() => {
+    if (prevTopCardId.current === topCard.id) return;
+
+    prevTopCardId.current = topCard.id;
+    setAnimatingCard({ id: `${topCard.id}_${Date.now()}`, card: topCard });
+    setIsImpactActive(true);
+
+    const impactTimer = setTimeout(() => {
+      setIsImpactActive(false);
+    }, 500);
+
+    const animTimer = setTimeout(() => {
+      setAnimatingCard(null);
+    }, 550);
+
+    return () => {
+      clearTimeout(impactTimer);
+      clearTimeout(animTimer);
+    };
+  }, [topCard]);
+
+  const handleDrawClick = () => {
+    if (!isMyTurn) return;
+    setIsDrawing(true);
+    setTimeout(() => setIsDrawing(false), 450);
+    onDrawCard();
+  };
+
   return (
     <div className="relative flex items-center justify-center p-6 sm:p-10">
       {/* Outer Active Color Glow Ring & Direction Orbit */}
@@ -96,10 +130,17 @@ export const CenterTable: React.FC<CenterTableProps> = ({
           <div className="absolute top-2 -left-1 w-24 h-36 sm:w-28 sm:h-40 rounded-xl bg-slate-800 border border-slate-700 pointer-events-none transform -rotate-3" />
           <div className="absolute top-1 -left-0.5 w-24 h-36 sm:w-28 sm:h-40 rounded-xl bg-slate-850 border border-slate-700 pointer-events-none transform rotate-2" />
 
+          {/* Animated Card Draw Slide Ghost */}
+          {isDrawing && (
+            <div className="absolute inset-0 z-30 pointer-events-none animate-card-draw">
+              <GameCard card={topCard} isFaceDown />
+            </div>
+          )}
+
           {/* Top Draw Card */}
           <button
             type="button"
-            onClick={onDrawCard}
+            onClick={handleDrawClick}
             disabled={!isMyTurn}
             aria-label="Draw a card"
             className={cn(
@@ -119,11 +160,27 @@ export const CenterTable: React.FC<CenterTableProps> = ({
           </button>
         </div>
 
-        {/* Discard Pile */}
+        {/* Discard Pile (With Dynamic Throw Slam and Impact Shockwave) */}
         <div className="relative">
+          {/* Discard Shockwave Ring */}
+          {isImpactActive && (
+            <div className="absolute inset-0 rounded-full border-2 border-white/80 pointer-events-none animate-discard-shockwave" />
+          )}
+
+          {/* Base Discard Card */}
           <div className="transform rotate-1 transition-transform">
             <GameCard card={topCard} />
           </div>
+
+          {/* Animated Flying Card Throw Overlay */}
+          {animatingCard && (
+            <div
+              key={animatingCard.id}
+              className="absolute inset-0 z-40 pointer-events-none animate-card-throw"
+            >
+              <GameCard card={animatingCard.card} />
+            </div>
+          )}
         </div>
       </div>
     </div>
