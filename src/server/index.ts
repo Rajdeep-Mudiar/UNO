@@ -79,6 +79,26 @@ const io = new Server(httpServer, {
   pingTimeout: 5000,
 });
 
+function getPublicRoomsList() {
+  return Array.from(rooms.values()).map((r) => ({
+    id: r.id,
+    code: r.code,
+    name: r.name,
+    hostName: r.players[0]?.name || 'Host',
+    hostAvatar: r.players[0]?.avatar || '👑',
+    playerCount: r.players.length,
+    maxPlayers: r.maxPlayers,
+    isPrivate: r.isPrivate,
+    ping: 25,
+    rules: r.rules,
+    mode: r.rules.sevenZero ? 'CHAOS 7-0' : r.rules.jumpIn ? 'JUMP-IN' : 'CUSTOM',
+  }));
+}
+
+function broadcastPublicRoomsList() {
+  io.emit('room:list_response', getPublicRoomsList());
+}
+
 function broadcastRoomState(room: ServerRoom) {
   io.to(room.id).emit('room:updated', {
     id: room.id,
@@ -99,6 +119,7 @@ function broadcastRoomState(room: ServerRoom) {
     })),
     inGame: !!room.gameState,
   });
+  broadcastPublicRoomsList();
 }
 
 function broadcastGameState(room: ServerRoom) {
@@ -213,6 +234,11 @@ function handleGameOver(room: ServerRoom) {
 io.on('connection', (socket: Socket) => {
   console.log(`[Socket Connected] ID: ${socket.id}`);
 
+  // 0. Get Active Public Rooms
+  socket.on('room:list', () => {
+    socket.emit('room:list_response', getPublicRoomsList());
+  });
+
   // 1. Create Room
   socket.on('room:create', (payload: { name: string; isPrivate?: boolean; maxPlayers?: number; rules?: Partial<GameRuleSet>; player: { id: string; name: string; avatar?: string } }) => {
     const roomId = `room_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
@@ -246,49 +272,63 @@ io.on('connection', (socket: Socket) => {
     socketToRoom.set(socket.id, roomId);
     socket.join(roomId);
 
+    console.log(`[Room Created] ID: ${roomId}, Code: ${roomCode}, Host: ${hostPlayer.name}`);
     socket.emit('room:created', { roomId, code: roomCode });
     broadcastRoomState(newRoom);
   });
 
-  // 2. Join Room
+  // 2. Join Room (By code or roomId)
   socket.on('room:join', (payload: { roomId?: string; code?: string; player: { id: string; name: string; avatar?: string } }) => {
     let targetRoom: ServerRoom | undefined;
 
+    const queryCode = payload.code?.trim().toUpperCase();
+
     if (payload.roomId) {
       targetRoom = rooms.get(payload.roomId);
-    } else if (payload.code) {
-      targetRoom = Array.from(rooms.values()).find((r) => r.code === payload.code?.toUpperCase());
+    } else if (queryCode) {
+      targetRoom = Array.from(rooms.values()).find(
+        (r) => r.code.toUpperCase() === queryCode || r.code.replace('UNO-', '') === queryCode.replace('UNO-', '')
+      );
     }
 
     if (!targetRoom) {
-      socket.emit('error:notification', { message: 'Room not found' });
+      socket.emit('error:notification', { message: `Room with code "${payload.code}" not found.` });
       return;
     }
 
     if (targetRoom.players.length >= targetRoom.maxPlayers) {
-      socket.emit('error:notification', { message: 'Room is full' });
+      socket.emit('error:notification', { message: 'Room is already full.' });
       return;
     }
 
-    const newPlayer: RoomPlayer = {
-      id: payload.player.id || socket.id,
-      socketId: socket.id,
-      name: payload.player.name || `Player ${targetRoom.players.length + 1}`,
-      avatar: payload.player.avatar || '🎮',
-      isBot: false,
-      isReady: false,
-      isHost: false,
-    };
+    // Check if player already in room
+    let existingPlayer = targetRoom.players.find((p) => p.socketId === socket.id || (p.id && p.id === payload.player.id));
+    if (existingPlayer) {
+      existingPlayer.socketId = socket.id;
+      existingPlayer.name = payload.player.name || existingPlayer.name;
+      existingPlayer.avatar = payload.player.avatar || existingPlayer.avatar;
+    } else {
+      const newPlayer: RoomPlayer = {
+        id: payload.player.id || socket.id,
+        socketId: socket.id,
+        name: payload.player.name || `Player ${targetRoom.players.length + 1}`,
+        avatar: payload.player.avatar || '🎮',
+        isBot: false,
+        isReady: false,
+        isHost: false,
+      };
+      targetRoom.players.push(newPlayer);
+    }
 
-    targetRoom.players.push(newPlayer);
     socketToRoom.set(socket.id, targetRoom.id);
     socket.join(targetRoom.id);
 
+    console.log(`[Room Joined] Room: ${targetRoom.code}, Player: ${payload.player.name}`);
     socket.emit('room:joined', { roomId: targetRoom.id, code: targetRoom.code });
     broadcastRoomState(targetRoom);
 
     if (targetRoom.gameState) {
-      socket.emit('game:state_update', sanitizeGameStateForPlayer(targetRoom.gameState, newPlayer.id));
+      socket.emit('game:state_update', sanitizeGameStateForPlayer(targetRoom.gameState, payload.player.id || socket.id));
     }
   });
 
@@ -315,7 +355,44 @@ io.on('connection', (socket: Socket) => {
     broadcastRoomState(room);
   });
 
-  // 4. Set Ready
+  // 4. Kick Player / Remove Bot
+  socket.on('room:kick_player', (payload: { playerId: string }) => {
+    const roomId = socketToRoom.get(socket.id);
+    if (!roomId) return;
+    const room = rooms.get(roomId);
+    if (!room) return;
+
+    const caller = room.players.find((p) => p.socketId === socket.id);
+    if (!caller || !caller.isHost) return;
+
+    room.players = room.players.filter((p) => p.id !== payload.playerId);
+    broadcastRoomState(room);
+  });
+
+  // 5. Leave Room
+  socket.on('room:leave', () => {
+    const roomId = socketToRoom.get(socket.id);
+    if (!roomId) return;
+    const room = rooms.get(roomId);
+    if (room) {
+      room.players = room.players.filter((p) => p.socketId !== socket.id);
+      socket.leave(room.id);
+      if (room.players.length === 0) {
+        if (room.turnTimer) clearInterval(room.turnTimer);
+        rooms.delete(roomId);
+      } else {
+        if (room.hostId === socket.id && room.players[0]) {
+          room.players[0].isHost = true;
+          room.hostId = room.players[0].id;
+        }
+        broadcastRoomState(room);
+      }
+    }
+    socketToRoom.delete(socket.id);
+    broadcastPublicRoomsList();
+  });
+
+  // 6. Set Ready
   socket.on('room:set_ready', (payload: { isReady: boolean }) => {
     const roomId = socketToRoom.get(socket.id);
     if (!roomId) return;
@@ -329,7 +406,7 @@ io.on('connection', (socket: Socket) => {
     }
   });
 
-  // 5. Start Game
+  // 7. Start Game
   socket.on('room:start_game', () => {
     const roomId = socketToRoom.get(socket.id);
     if (!roomId) return;
@@ -356,13 +433,13 @@ io.on('connection', (socket: Socket) => {
     });
 
     room.gameState = game;
-    io.to(room.id).emit('game:started', { gameId: game.gameId });
+    io.to(room.id).emit('game:started', { gameId: game.gameId, roomId: room.id });
     broadcastGameState(room);
     resetTurnTimer(room);
     handleBotTurnIfActive(room);
   });
 
-  // 6. Game Action (Play, Draw, Pass, Uno, Challenge, JumpIn)
+  // 8. Game Action (Play, Draw, Pass, Uno, Challenge, JumpIn)
   socket.on('game:action', (action: EngineAction) => {
     const roomId = socketToRoom.get(socket.id);
     if (!roomId) return;
@@ -397,7 +474,7 @@ io.on('connection', (socket: Socket) => {
     }
   });
 
-  // 7. Chat Message
+  // 9. Chat Message
   socket.on('chat:send', (payload: { message: string; senderName?: string }) => {
     const roomId = socketToRoom.get(socket.id);
     if (!roomId) return;
@@ -409,7 +486,7 @@ io.on('connection', (socket: Socket) => {
     });
   });
 
-  // 8. Disconnect
+  // 10. Disconnect
   socket.on('disconnect', () => {
     console.log(`[Socket Disconnected] ID: ${socket.id}`);
     const roomId = socketToRoom.get(socket.id);
@@ -430,6 +507,7 @@ io.on('connection', (socket: Socket) => {
         }
       }
       socketToRoom.delete(socket.id);
+      broadcastPublicRoomsList();
     }
   });
 });

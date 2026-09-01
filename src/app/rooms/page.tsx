@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { useState, useEffect, useCallback, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useSession } from 'next-auth/react';
 import { 
   Users, 
   Plus, 
@@ -12,10 +13,14 @@ import {
   Copy, 
   Play, 
   UserPlus,
-  Trash2
+  Trash2,
+  AlertCircle,
+  Wifi,
+  WifiOff
 } from 'lucide-react';
 import { DEFAULT_RULES } from '@/game-engine/rules';
 import { GameRuleSet } from '@/game-engine/types';
+import { getSocket } from '@/lib/socket';
 
 interface RoomItem {
   id: string;
@@ -31,98 +36,44 @@ interface RoomItem {
   mode: string;
 }
 
-const INITIAL_ROOMS: RoomItem[] = [
-  {
-    id: 'room-1',
-    code: 'UNO-9142',
-    name: "Alex's Speed Stacking Arena",
-    hostName: 'AlexBlade',
-    hostAvatar: '⚡',
-    playerCount: 3,
-    maxPlayers: 4,
-    isPrivate: false,
-    ping: 28,
-    rules: { stackDrawTwo: true, stackWildDrawFour: true, turnTimerSec: 10, jumpIn: true },
-    mode: 'BLITZ STACK',
-  },
-  {
-    id: 'room-2',
-    code: 'UNO-4081',
-    name: 'Chaos 7-0 Hand Swap Mayhem',
-    hostName: 'CardQueen99',
-    hostAvatar: '👑',
-    playerCount: 2,
-    maxPlayers: 4,
-    isPrivate: false,
-    ping: 35,
-    rules: { sevenZero: true, drawUntilPlayable: true, stackDrawTwo: true },
-    mode: 'CHAOS 7-0',
-  },
-  {
-    id: 'room-3',
-    code: 'UNO-7731',
-    name: 'High Roller Private Match',
-    hostName: 'ViperX',
-    hostAvatar: '🐍',
-    playerCount: 1,
-    maxPlayers: 2,
-    isPrivate: true,
-    ping: 19,
-    rules: { turnTimerSec: 15, wildDrawFourChallenge: true },
-    mode: 'DUEL',
-  },
-  {
-    id: 'room-4',
-    code: 'UNO-5520',
-    name: 'Standard Pro Rules (No Stack)',
-    hostName: 'GrandMasterLeo',
-    hostAvatar: '🦁',
-    playerCount: 3,
-    maxPlayers: 4,
-    isPrivate: false,
-    ping: 42,
-    rules: { stackDrawTwo: false, stackWildDrawFour: false, jumpIn: false, sevenZero: false },
-    mode: 'CLASSIC PRO',
-  },
-  {
-    id: 'room-5',
-    code: 'UNO-8819',
-    name: '8-Player Extreme Party Lobby',
-    hostName: 'PartyHostDan',
-    hostAvatar: '🎉',
-    playerCount: 5,
-    maxPlayers: 8,
-    isPrivate: false,
-    ping: 31,
-    rules: { jumpIn: true, stackDrawTwo: true, stackWildDrawFour: true, sevenZero: true },
-    mode: 'PARTY 8P',
-  },
-];
-
-const BOT_AVATARS = ['🤖', '🦾', '👾', '🎯'];
-
-interface LobbySlot {
-  slotIndex: number;
-  isHost: boolean;
+interface LobbyPlayer {
+  id: string;
   name: string;
   avatar: string;
   isBot: boolean;
   botDifficulty?: string;
   isReady: boolean;
+  isHost: boolean;
 }
 
-export default function RoomsPage() {
+interface ServerRoomUpdate {
+  id: string;
+  code: string;
+  name: string;
+  hostId: string;
+  isPrivate: boolean;
+  maxPlayers: number;
+  rules: GameRuleSet;
+  players: LobbyPlayer[];
+  inGame: boolean;
+}
+
+function RoomsContent() {
   const router = useRouter();
-  const [rooms, setRooms] = useState<RoomItem[]>(INITIAL_ROOMS);
+  const searchParams = useSearchParams();
+  const initialCode = searchParams.get('code') || '';
+  const { data: session } = useSession();
+
+  const [rooms, setRooms] = useState<RoomItem[]>([]);
   const [activeFilter, setActiveFilter] = useState<'ALL' | 'PUBLIC' | 'CUSTOM' | 'DUEL'>('ALL');
-  const [searchCode, setSearchCode] = useState('');
+  const [searchCode, setSearchCode] = useState(initialCode);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  const [isConnected, setIsConnected] = useState(false);
 
   // Active Lobby State
-  const [activeRoom, setActiveRoom] = useState<RoomItem | null>(null);
-  const [lobbySlots, setLobbySlots] = useState<LobbySlot[]>([]);
-  const [isReady, setIsReady] = useState(false);
+  const [activeRoom, setActiveRoom] = useState<ServerRoomUpdate | null>(null);
 
   // Form State for Room Creation
   const [formName, setFormName] = useState('My Custom Arena');
@@ -132,112 +83,168 @@ export default function RoomsPage() {
   const [formTimer, setFormTimer] = useState(15);
   const [formRules, setFormRules] = useState<GameRuleSet>({ ...DEFAULT_RULES });
 
+  // Get current player identity
+  const getCurrentPlayer = useCallback(() => {
+    return {
+      id: session?.user?.id || (typeof window !== 'undefined' ? localStorage.getItem('uno_player_id') || `guest_${Math.floor(1000 + Math.random() * 9000)}` : 'guest'),
+      name: session?.user?.name || (typeof window !== 'undefined' ? localStorage.getItem('uno_player_name') || `Player ${Math.floor(100 + Math.random() * 900)}` : 'Player'),
+      avatar: session?.user?.image || '👑',
+    };
+  }, [session]);
+
+  // Persist guest ID in localStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined' && !session?.user) {
+      if (!localStorage.getItem('uno_player_id')) {
+        const generatedId = `guest_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+        localStorage.setItem('uno_player_id', generatedId);
+      }
+      if (!localStorage.getItem('uno_player_name')) {
+        const generatedName = `Player ${Math.floor(100 + Math.random() * 900)}`;
+        localStorage.setItem('uno_player_name', generatedName);
+      }
+    }
+  }, [session]);
+
+  // Initialize Socket.IO connection & event listeners
+  useEffect(() => {
+    const socket = getSocket();
+
+    const handleConnect = () => {
+      setIsConnected(true);
+      socket.emit('room:list');
+    };
+
+    const handleDisconnect = () => {
+      setIsConnected(false);
+    };
+
+    const handleRoomList = (roomList: RoomItem[]) => {
+      setRooms(roomList);
+    };
+
+    const handleRoomUpdated = (roomData: ServerRoomUpdate) => {
+      setActiveRoom(roomData);
+      setErrorMessage('');
+    };
+
+    const handleGameStarted = (data: { gameId: string; roomId: string }) => {
+      router.push(`/play/practice?gameId=${data.gameId}`);
+    };
+
+    const handleErrorNotification = (payload: { message: string }) => {
+      setErrorMessage(payload.message);
+      setTimeout(() => setErrorMessage(''), 4000);
+    };
+
+    socket.on('connect', handleConnect);
+    socket.on('disconnect', handleDisconnect);
+    socket.on('room:list_response', handleRoomList);
+    socket.on('room:updated', handleRoomUpdated);
+    socket.on('game:started', handleGameStarted);
+    socket.on('error:notification', handleErrorNotification);
+
+    if (socket.connected) {
+      setIsConnected(true);
+      socket.emit('room:list');
+    }
+
+    // If code parameter is in URL on load, attempt join
+    if (initialCode) {
+      socket.emit('room:join', {
+        code: initialCode,
+        player: getCurrentPlayer(),
+      });
+    }
+
+    return () => {
+      socket.off('connect', handleConnect);
+      socket.off('disconnect', handleDisconnect);
+      socket.off('room:list_response', handleRoomList);
+      socket.off('room:updated', handleRoomUpdated);
+      socket.off('game:started', handleGameStarted);
+      socket.off('error:notification', handleErrorNotification);
+    };
+  }, [initialCode, getCurrentPlayer, router]);
+
   const handleCreateRoom = (e: React.FormEvent) => {
     e.preventDefault();
-    const newRoomCode = `UNO-${Math.floor(1000 + Math.random() * 9000)}`;
-    const newRoom: RoomItem = {
-      id: `room-${Date.now()}`,
-      code: newRoomCode,
+    const socket = getSocket();
+    const player = getCurrentPlayer();
+
+    socket.emit('room:create', {
       name: formName || 'Custom Arena',
-      hostName: 'Player 1 (You)',
-      hostAvatar: '👑',
-      playerCount: 1,
-      maxPlayers: formMaxPlayers,
       isPrivate: formIsPrivate,
-      ping: 15,
+      maxPlayers: formMaxPlayers,
       rules: {
         ...formRules,
         turnTimerSec: formTimer,
         maxPlayers: formMaxPlayers,
       },
-      mode: formRules.sevenZero ? 'CHAOS 7-0' : formRules.jumpIn ? 'JUMP-IN' : 'CUSTOM',
-    };
+      player,
+    });
 
-    setRooms([newRoom, ...rooms]);
     setShowCreateModal(false);
-    enterRoomLobby(newRoom, true);
   };
 
-  const enterRoomLobby = (room: RoomItem, asHost = false) => {
-    setActiveRoom(room);
-    const slots: LobbySlot[] = [
-      {
-        slotIndex: 0,
-        isHost: asHost,
-        name: asHost ? 'Player 1 (You)' : room.hostName,
-        avatar: asHost ? '👑' : room.hostAvatar,
-        isBot: false,
-        isReady: true,
-      },
-    ];
+  const handleJoinRoom = (codeOrId: string) => {
+    if (!codeOrId.trim()) return;
+    const socket = getSocket();
+    const player = getCurrentPlayer();
 
-    if (!asHost) {
-      slots.push({
-        slotIndex: 1,
-        isHost: false,
-        name: 'Player 1 (You)',
-        avatar: '🎮',
-        isBot: false,
-        isReady: false,
-      });
-    }
-
-    // Fill other slots with bots or leave open
-    const targetBots = room.maxPlayers >= 4 ? 2 : 1;
-    for (let i = slots.length; i < targetBots + slots.length; i++) {
-      if (slots.length < room.maxPlayers) {
-        const botIndex = slots.length;
-        slots.push({
-          slotIndex: botIndex,
-          isHost: false,
-          name: `AI Bot ${botIndex}`,
-          avatar: BOT_AVATARS[botIndex % BOT_AVATARS.length] || '🤖',
-          isBot: true,
-          botDifficulty: ['BALANCED', 'AGGRESSIVE', 'DEFENSIVE'][botIndex % 3],
-          isReady: true,
-        });
-      }
-    }
-
-    setLobbySlots(slots);
+    socket.emit('room:join', {
+      code: codeOrId.trim(),
+      player,
+    });
   };
 
   const handleAddBot = () => {
-    if (!activeRoom || lobbySlots.length >= activeRoom.maxPlayers) return;
-    const nextSlot = lobbySlots.length;
-    setLobbySlots([
-      ...lobbySlots,
-      {
-        slotIndex: nextSlot,
-        isHost: false,
-        name: `AI Bot ${nextSlot}`,
-        avatar: BOT_AVATARS[nextSlot % BOT_AVATARS.length] || '🤖',
-        isBot: true,
-        botDifficulty: 'BALANCED',
-        isReady: true,
-      },
-    ]);
+    if (!activeRoom) return;
+    const socket = getSocket();
+    socket.emit('room:add_bot', { difficulty: 'MEDIUM' });
   };
 
-  const handleRemoveSlot = (index: number) => {
-    if (index === 0) return; // Cannot remove host
-    setLobbySlots(lobbySlots.filter((_, idx) => idx !== index));
+  const handleRemoveSlot = (playerId: string) => {
+    const socket = getSocket();
+    socket.emit('room:kick_player', { playerId });
+  };
+
+  const handleToggleReady = () => {
+    if (!activeRoom) return;
+    const socket = getSocket();
+    const myPlayer = activeRoom.players.find((p) => p.name === (session?.user?.name || localStorage.getItem('uno_player_name')));
+    const currentReady = myPlayer ? myPlayer.isReady : false;
+    socket.emit('room:set_ready', { isReady: !currentReady });
+  };
+
+  const handleLeaveLobby = () => {
+    const socket = getSocket();
+    socket.emit('room:leave');
+    setActiveRoom(null);
   };
 
   const handleCopyInvite = () => {
     if (!activeRoom) return;
-    navigator.clipboard.writeText(`${window.location.origin}/rooms?code=${activeRoom.code}`);
+    const inviteUrl = `${window.location.origin}/rooms?code=${activeRoom.code}`;
+    navigator.clipboard.writeText(inviteUrl);
     setCopiedCode(true);
     setTimeout(() => setCopiedCode(false), 2000);
   };
 
   const handleStartGame = () => {
-    router.push('/play/practice');
+    const socket = getSocket();
+    socket.emit('room:start_game');
   };
+
+  const myPlayer = activeRoom?.players.find(
+    (p) => p.name === (session?.user?.name || (typeof window !== 'undefined' ? localStorage.getItem('uno_player_name') : ''))
+  );
+  const isHost = myPlayer?.isHost ?? false;
+  const isReady = myPlayer?.isReady ?? false;
 
   const filteredRooms = rooms.filter((r) => {
     if (activeFilter === 'PUBLIC') return !r.isPrivate;
-    if (activeFilter === 'CUSTOM') return r.mode.includes('CUSTOM') || r.rules.jumpIn || r.rules.sevenZero;
+    if (activeFilter === 'CUSTOM') return r.mode?.includes('CUSTOM') || r.rules?.jumpIn || r.rules?.sevenZero;
     if (activeFilter === 'DUEL') return r.maxPlayers === 2;
     return true;
   });
@@ -247,10 +254,22 @@ export default function RoomsPage() {
       {/* Header Banner */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800/80 pb-6">
         <div>
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-purple-500/10 border border-purple-500/30 text-xs font-bold text-purple-300 mb-2">
-            <Users className="w-3.5 h-3.5 text-purple-400" />
-            <span>CUSTOM MATCHES & HOUSE RULES</span>
+          <div className="flex items-center gap-3 mb-2">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-purple-500/10 border border-purple-500/30 text-xs font-bold text-purple-300">
+              <Users className="w-3.5 h-3.5 text-purple-400" />
+              <span>CUSTOM MATCHES & HOUSE RULES</span>
+            </div>
+
+            <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${
+              isConnected 
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' 
+                : 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+            }`}>
+              {isConnected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
+              <span>{isConnected ? 'Server Connected' : 'Connecting to Server...'}</span>
+            </div>
           </div>
+
           <h1 className="text-3xl sm:text-4xl font-black text-white uppercase tracking-tight">
             MULTIPLAYER ROOMS
           </h1>
@@ -271,6 +290,14 @@ export default function RoomsPage() {
         </div>
       </div>
 
+      {/* Error Message Toast */}
+      {errorMessage && (
+        <div className="p-4 rounded-2xl bg-red-500/10 border border-red-500/30 text-red-300 text-xs flex items-center gap-2 animate-fadeIn">
+          <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+          <span>{errorMessage}</span>
+        </div>
+      )}
+
       {/* If in an active Room Lobby */}
       {activeRoom ? (
         <div className="space-y-6">
@@ -280,7 +307,7 @@ export default function RoomsPage() {
                 <div className="flex items-center gap-3">
                   <h2 className="text-2xl font-black text-white">{activeRoom.name}</h2>
                   <span className="px-3 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 text-xs font-black">
-                    {activeRoom.mode}
+                    {activeRoom.rules.sevenZero ? 'CHAOS 7-0' : activeRoom.rules.jumpIn ? 'JUMP-IN' : 'CUSTOM MATCH'}
                   </span>
                   {activeRoom.isPrivate && (
                     <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold flex items-center gap-1">
@@ -289,7 +316,7 @@ export default function RoomsPage() {
                   )}
                 </div>
                 <p className="text-xs text-slate-400 mt-1">
-                  Host: <span className="text-slate-200 font-bold">{activeRoom.hostName}</span> | Turn Timer:{' '}
+                  Players Connected: <span className="text-slate-200 font-bold">{activeRoom.players.length} / {activeRoom.maxPlayers}</span> | Turn Timer:{' '}
                   <span className="text-purple-300 font-bold">{activeRoom.rules.turnTimerSec || 15}s</span>
                 </p>
               </div>
@@ -303,10 +330,11 @@ export default function RoomsPage() {
                 <button
                   type="button"
                   onClick={handleCopyInvite}
-                  className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 hover:text-white transition-colors"
+                  className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 hover:text-white transition-colors flex items-center gap-1.5 text-xs font-bold"
                   title="Copy Invite Link"
                 >
-                  {copiedCode ? <Check className="w-5 h-5 text-emerald-400" /> : <Copy className="w-5 h-5" />}
+                  {copiedCode ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                  <span>{copiedCode ? 'Copied!' : 'Copy Link'}</span>
                 </button>
               </div>
             </div>
@@ -315,9 +343,9 @@ export default function RoomsPage() {
             <div>
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-xs font-black uppercase tracking-wider text-slate-400">
-                  Lobby Players ({lobbySlots.length} / {activeRoom.maxPlayers})
+                  Lobby Players ({activeRoom.players.length} / {activeRoom.maxPlayers})
                 </h3>
-                {lobbySlots.length < activeRoom.maxPlayers && (
+                {isHost && activeRoom.players.length < activeRoom.maxPlayers && (
                   <button
                     type="button"
                     onClick={handleAddBot}
@@ -331,16 +359,16 @@ export default function RoomsPage() {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
                 {Array.from({ length: activeRoom.maxPlayers }).map((_, idx) => {
-                  const slot = lobbySlots[idx];
+                  const slot = activeRoom.players[idx];
                   if (slot) {
                     return (
                       <div
-                        key={idx}
+                        key={slot.id || idx}
                         className="glass-panel p-4 rounded-2xl border border-slate-800 bg-slate-950/60 flex flex-col justify-between relative group"
                       >
                         <div className="flex items-start justify-between">
                           <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-700 flex items-center justify-center text-2xl shadow-inner">
-                            {slot.avatar}
+                            {slot.avatar || '🎮'}
                           </div>
                           <div className="flex items-center gap-1">
                             {slot.isHost && (
@@ -353,12 +381,12 @@ export default function RoomsPage() {
                                 BOT
                               </span>
                             )}
-                            {!slot.isHost && (
+                            {isHost && !slot.isHost && (
                               <button
                                 type="button"
-                                onClick={() => handleRemoveSlot(idx)}
+                                onClick={() => handleRemoveSlot(slot.id)}
                                 className="p-1 text-slate-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                                title="Kick slot"
+                                title="Kick player"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
@@ -369,7 +397,7 @@ export default function RoomsPage() {
                         <div className="mt-4">
                           <h4 className="font-bold text-white text-sm truncate">{slot.name}</h4>
                           <p className="text-[11px] text-slate-400">
-                            {slot.isBot ? `Strategy: ${slot.botDifficulty}` : 'Slot Connected'}
+                            {slot.isBot ? `Strategy: ${slot.botDifficulty || 'MEDIUM'}` : 'Player Connected'}
                           </p>
                         </div>
 
@@ -385,12 +413,16 @@ export default function RoomsPage() {
                   return (
                     <div
                       key={idx}
-                      onClick={handleAddBot}
-                      className="border-2 border-dashed border-slate-800 hover:border-purple-500/50 rounded-2xl p-6 flex flex-col items-center justify-center gap-2 text-slate-500 hover:text-purple-300 cursor-pointer transition-all min-h-[140px]"
+                      onClick={isHost ? handleAddBot : undefined}
+                      className={`border-2 border-dashed border-slate-800 rounded-2xl p-6 flex flex-col items-center justify-center gap-2 text-slate-500 transition-all min-h-[140px] ${
+                        isHost ? 'hover:border-purple-500/50 hover:text-purple-300 cursor-pointer' : ''
+                      }`}
                     >
                       <UserPlus className="w-6 h-6" />
                       <span className="text-xs font-bold">Slot {idx + 1} Open</span>
-                      <span className="text-[10px] text-slate-500">Click to add bot</span>
+                      <span className="text-[10px] text-slate-500">
+                        {isHost ? 'Click to add bot or share code' : 'Waiting for player...'}
+                      </span>
                     </div>
                   );
                 })}
@@ -436,7 +468,7 @@ export default function RoomsPage() {
             <div className="flex flex-wrap items-center justify-between gap-4 pt-2">
               <button
                 type="button"
-                onClick={() => setActiveRoom(null)}
+                onClick={handleLeaveLobby}
                 className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition-colors"
               >
                 ← Leave Lobby
@@ -445,7 +477,7 @@ export default function RoomsPage() {
               <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  onClick={() => setIsReady(!isReady)}
+                  onClick={handleToggleReady}
                   className={`px-6 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition-all border ${
                     isReady
                       ? 'bg-emerald-600/30 text-emerald-300 border-emerald-500/50'
@@ -455,21 +487,24 @@ export default function RoomsPage() {
                   {isReady ? '✓ Ready' : 'Set Ready'}
                 </button>
 
-                <button
-                  type="button"
-                  onClick={handleStartGame}
-                  className="flex items-center gap-2 px-8 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-black text-xs uppercase tracking-wider shadow-lg shadow-emerald-950/50 hover:scale-105 active:scale-95 transition-all"
-                >
-                  <Play className="w-4 h-4 fill-current" />
-                  Launch Game
-                </button>
+                {isHost && (
+                  <button
+                    type="button"
+                    onClick={handleStartGame}
+                    disabled={activeRoom.players.length < 2}
+                    className="flex items-center gap-2 px-8 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:from-teal-500 text-slate-950 font-black text-xs uppercase tracking-wider shadow-lg shadow-emerald-950/50 hover:scale-105 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Play className="w-4 h-4 fill-current" />
+                    Launch Game
+                  </button>
+                )}
               </div>
             </div>
           </div>
         </div>
       ) : null}
 
-      {/* Main Room Browser (shown if not currently in lobby or underneath) */}
+      {/* Main Room Browser (shown if not currently in lobby) */}
       {!activeRoom && (
         <div className="space-y-6">
           {/* Quick Join & Filter Controls */}
@@ -507,29 +542,9 @@ export default function RoomsPage() {
               </div>
               <button
                 type="button"
-                onClick={() => {
-                  const match = rooms.find((r) => r.code === searchCode);
-                  if (match) {
-                    enterRoomLobby(match);
-                  } else if (searchCode) {
-                    // Create dynamic match with that code
-                    const customRoom: RoomItem = {
-                      id: `room-${Date.now()}`,
-                      code: searchCode,
-                      name: `Room ${searchCode}`,
-                      hostName: 'OnlineHost',
-                      hostAvatar: '🎮',
-                      playerCount: 1,
-                      maxPlayers: 4,
-                      isPrivate: false,
-                      ping: 25,
-                      rules: { ...DEFAULT_RULES },
-                      mode: 'CASUAL',
-                    };
-                    enterRoomLobby(customRoom);
-                  }
-                }}
-                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold border border-slate-700 transition-colors"
+                onClick={() => handleJoinRoom(searchCode)}
+                disabled={!searchCode.trim()}
+                className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold transition-colors disabled:opacity-50"
               >
                 Join
               </button>
@@ -537,80 +552,97 @@ export default function RoomsPage() {
           </div>
 
           {/* Rooms Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {filteredRooms.map((room) => (
-              <div
-                key={room.id}
-                className="glass-panel p-5 rounded-2xl border border-slate-800/80 bg-slate-900/60 hover:border-purple-500/40 hover:bg-slate-900/90 transition-all flex flex-col justify-between group"
-              >
-                <div className="space-y-3">
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-xl">
-                        {room.hostAvatar}
+          {filteredRooms.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              {filteredRooms.map((room) => (
+                <div
+                  key={room.id}
+                  className="glass-panel p-5 rounded-2xl border border-slate-800/80 bg-slate-900/60 hover:border-purple-500/40 hover:bg-slate-900/90 transition-all flex flex-col justify-between group"
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-xl">
+                          {room.hostAvatar || '👑'}
+                        </div>
+                        <div>
+                          <h3 className="text-sm font-bold text-white group-hover:text-purple-300 transition-colors line-clamp-1">
+                            {room.name}
+                          </h3>
+                          <p className="text-[11px] text-slate-400">Host: {room.hostName}</p>
+                        </div>
                       </div>
-                      <div>
-                        <h3 className="text-sm font-bold text-white group-hover:text-purple-300 transition-colors line-clamp-1">
-                          {room.name}
-                        </h3>
-                        <p className="text-[11px] text-slate-400">Host: {room.hostName}</p>
-                      </div>
+
+                      {room.isPrivate ? (
+                        <span className="p-1.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20" title="Private Room">
+                          <Lock className="w-3.5 h-3.5" />
+                        </span>
+                      ) : (
+                        <span className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" title="Public Room">
+                          <Unlock className="w-3.5 h-3.5" />
+                        </span>
+                      )}
                     </div>
 
-                    {room.isPrivate ? (
-                      <span className="p-1.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20" title="Private Room">
-                        <Lock className="w-3.5 h-3.5" />
+                    {/* Badges & Mode */}
+                    <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                      <span className="px-2 py-0.5 rounded-md bg-purple-500/20 text-purple-300 border border-purple-500/30 text-[10px] font-black">
+                        {room.mode || 'CUSTOM'}
                       </span>
-                    ) : (
-                      <span className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" title="Public Room">
-                        <Unlock className="w-3.5 h-3.5" />
-                      </span>
-                    )}
+                      {room.rules?.stackDrawTwo && (
+                        <span className="px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-300 border border-blue-500/20 text-[10px] font-semibold">
+                          +2/+4 Stack
+                        </span>
+                      )}
+                      {room.rules?.jumpIn && (
+                        <span className="px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-300 border border-amber-500/20 text-[10px] font-semibold">
+                          Jump-In
+                        </span>
+                      )}
+                      {room.rules?.sevenZero && (
+                        <span className="px-2 py-0.5 rounded-md bg-rose-500/10 text-rose-300 border border-rose-500/20 text-[10px] font-semibold">
+                          7-0
+                        </span>
+                      )}
+                    </div>
                   </div>
 
-                  {/* Badges & Mode */}
-                  <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                    <span className="px-2 py-0.5 rounded-md bg-purple-500/20 text-purple-300 border border-purple-500/30 text-[10px] font-black">
-                      {room.mode}
-                    </span>
-                    {room.rules.stackDrawTwo && (
-                      <span className="px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-300 border border-blue-500/20 text-[10px] font-semibold">
-                        +2/+4 Stack
+                  {/* Footer info & Join Button */}
+                  <div className="mt-5 pt-3 border-t border-slate-800/80 flex items-center justify-between">
+                    <div className="flex items-center gap-3 text-xs text-slate-400">
+                      <span className="font-semibold text-slate-200">
+                        👥 {room.playerCount} / {room.maxPlayers}
                       </span>
-                    )}
-                    {room.rules.jumpIn && (
-                      <span className="px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-300 border border-amber-500/20 text-[10px] font-semibold">
-                        Jump-In
-                      </span>
-                    )}
-                    {room.rules.sevenZero && (
-                      <span className="px-2 py-0.5 rounded-md bg-rose-500/10 text-rose-300 border border-rose-500/20 text-[10px] font-semibold">
-                        7-0
-                      </span>
-                    )}
+                      <span className="text-[11px] text-emerald-400 font-mono">Code: {room.code}</span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleJoinRoom(room.code)}
+                      className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-purple-600 text-slate-200 hover:text-white text-xs font-bold transition-all shadow group-hover:scale-105"
+                    >
+                      Enter Lobby
+                    </button>
                   </div>
                 </div>
-
-                {/* Footer info & Join Button */}
-                <div className="mt-5 pt-3 border-t border-slate-800/80 flex items-center justify-between">
-                  <div className="flex items-center gap-3 text-xs text-slate-400">
-                    <span className="font-semibold text-slate-200">
-                      👥 {room.playerCount} / {room.maxPlayers}
-                    </span>
-                    <span className="text-[11px] text-emerald-400">⚡ {room.ping}ms</span>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => enterRoomLobby(room)}
-                    className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-purple-600 text-slate-200 hover:text-white text-xs font-bold transition-all shadow group-hover:scale-105"
-                  >
-                    Enter Lobby
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-12 rounded-3xl border border-slate-800 bg-slate-900/40 p-8 space-y-4">
+              <Users className="w-12 h-12 text-slate-600 mx-auto" />
+              <h3 className="text-lg font-bold text-white">No active public rooms right now</h3>
+              <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                Be the first to create a custom room, or enter a room code above to join a friend.
+              </p>
+              <button
+                type="button"
+                onClick={() => setShowCreateModal(true)}
+                className="px-6 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-lg"
+              >
+                + Create Custom Room
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -778,5 +810,13 @@ export default function RoomsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function RoomsPage() {
+  return (
+    <Suspense fallback={<div className="p-12 text-center text-xs font-bold text-slate-400">Loading Multiplayer Rooms...</div>}>
+      <RoomsContent />
+    </Suspense>
   );
 }
