@@ -170,7 +170,7 @@ function RoomsContent() {
     };
 
     const handleGameStarted = (data: { gameId: string; roomId: string }) => {
-      router.push(`/play/practice?gameId=${data.gameId}`);
+      router.push(`/play/match?roomId=${data.roomId}&gameId=${data.gameId}`);
     };
 
     const handleErrorNotification = (payload: { message: string }) => {
