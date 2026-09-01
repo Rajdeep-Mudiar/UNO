@@ -4,11 +4,14 @@ import React from 'react';
 import { Card, CardColor } from '@/game-engine/types';
 import { cn } from '@/lib/utils';
 
+export type CardSizeType = 'normal' | 'medium' | 'compact' | 'mini';
+
 interface GameCardProps {
   card: Card;
   isPlayable?: boolean;
   isSelected?: boolean;
   isSmall?: boolean;
+  size?: CardSizeType;
   isFaceDown?: boolean;
   onClick?: () => void;
   className?: string;
@@ -57,18 +60,29 @@ export const GameCard: React.FC<GameCardProps> = ({
   isPlayable = false,
   isSelected = false,
   isSmall = false,
+  size = 'normal',
   isFaceDown = false,
   onClick,
   className,
 }) => {
   const colorStyles = COLOR_MAP[card.color] || COLOR_MAP.WILD;
 
+  // Resolve effective size classes
+  const effectiveSize: CardSizeType = isSmall ? 'mini' : size;
+
+  const sizeClasses = {
+    normal: 'w-24 h-36 sm:w-28 sm:h-40 p-2',
+    medium: 'w-20 h-30 sm:w-24 sm:h-36 p-1.5',
+    compact: 'w-16 h-24 sm:w-20 sm:h-30 p-1',
+    mini: 'w-12 h-18 sm:w-14 sm:h-22 p-1',
+  }[effectiveSize];
+
   if (isFaceDown) {
     return (
       <div
         className={cn(
-          'relative rounded-xl border-2 border-slate-700 bg-slate-900 shadow-md transition-all select-none overflow-hidden',
-          isSmall ? 'w-10 h-14' : 'w-24 h-36 sm:w-28 sm:h-40',
+          'relative rounded-xl border-2 border-slate-700 bg-slate-900 shadow-md transition-all select-none overflow-hidden shrink-0',
+          sizeClasses,
           className
         )}
       >
@@ -86,7 +100,15 @@ export const GameCard: React.FC<GameCardProps> = ({
       case 'NUMBER':
         return (
           <div className="flex flex-col items-center justify-center">
-            <span className={cn('font-black drop-shadow-md text-white tracking-tighter', isSmall ? 'text-lg' : 'text-4xl sm:text-5xl')}>
+            <span
+              className={cn(
+                'font-black drop-shadow-md text-white tracking-tighter',
+                effectiveSize === 'normal' && 'text-4xl sm:text-5xl',
+                effectiveSize === 'medium' && 'text-3xl sm:text-4xl',
+                effectiveSize === 'compact' && 'text-2xl sm:text-3xl',
+                effectiveSize === 'mini' && 'text-lg sm:text-xl'
+              )}
+            >
               {card.value}
             </span>
           </div>
@@ -95,7 +117,13 @@ export const GameCard: React.FC<GameCardProps> = ({
         return (
           <div className="flex flex-col items-center justify-center">
             <svg
-              className={cn('text-white drop-shadow-md', isSmall ? 'w-5 h-5' : 'w-10 h-10 sm:w-12 sm:h-12')}
+              className={cn(
+                'text-white drop-shadow-md',
+                effectiveSize === 'normal' && 'w-10 h-10 sm:w-12 sm:h-12',
+                effectiveSize === 'medium' && 'w-8 h-8 sm:w-10 sm:h-10',
+                effectiveSize === 'compact' && 'w-6 h-6 sm:w-8 sm:h-8',
+                effectiveSize === 'mini' && 'w-4 h-4 sm:w-5 sm:h-5'
+              )}
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -112,7 +140,13 @@ export const GameCard: React.FC<GameCardProps> = ({
         return (
           <div className="flex flex-col items-center justify-center">
             <svg
-              className={cn('text-white drop-shadow-md', isSmall ? 'w-5 h-5' : 'w-10 h-10 sm:w-12 sm:h-12')}
+              className={cn(
+                'text-white drop-shadow-md',
+                effectiveSize === 'normal' && 'w-10 h-10 sm:w-12 sm:h-12',
+                effectiveSize === 'medium' && 'w-8 h-8 sm:w-10 sm:h-10',
+                effectiveSize === 'compact' && 'w-6 h-6 sm:w-8 sm:h-8',
+                effectiveSize === 'mini' && 'w-4 h-4 sm:w-5 sm:h-5'
+              )}
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -128,7 +162,15 @@ export const GameCard: React.FC<GameCardProps> = ({
       case 'DRAW_TWO':
         return (
           <div className="flex flex-col items-center justify-center">
-            <span className={cn('font-black drop-shadow-md text-white tracking-tight', isSmall ? 'text-base' : 'text-3xl sm:text-4xl')}>
+            <span
+              className={cn(
+                'font-black drop-shadow-md text-white tracking-tight',
+                effectiveSize === 'normal' && 'text-3xl sm:text-4xl',
+                effectiveSize === 'medium' && 'text-2xl sm:text-3xl',
+                effectiveSize === 'compact' && 'text-xl sm:text-2xl',
+                effectiveSize === 'mini' && 'text-sm sm:text-base'
+              )}
+            >
               +2
             </span>
           </div>
@@ -136,7 +178,15 @@ export const GameCard: React.FC<GameCardProps> = ({
       case 'WILD':
         return (
           <div className="relative flex items-center justify-center">
-            <div className={cn('rounded-full grid grid-cols-2 overflow-hidden shadow-inner border border-white/20', isSmall ? 'w-6 h-6' : 'w-12 h-12 sm:w-14 sm:h-14')}>
+            <div
+              className={cn(
+                'rounded-full grid grid-cols-2 overflow-hidden shadow-inner border border-white/20',
+                effectiveSize === 'normal' && 'w-12 h-12 sm:w-14 sm:h-14',
+                effectiveSize === 'medium' && 'w-10 h-10 sm:w-12 sm:h-12',
+                effectiveSize === 'compact' && 'w-7 h-7 sm:w-9 sm:h-9',
+                effectiveSize === 'mini' && 'w-5 h-5 sm:w-6 sm:h-6'
+              )}
+            >
               <div className="bg-red-500" />
               <div className="bg-blue-500" />
               <div className="bg-amber-400" />
@@ -147,13 +197,29 @@ export const GameCard: React.FC<GameCardProps> = ({
       case 'WILD_DRAW_FOUR':
         return (
           <div className="relative flex flex-col items-center justify-center">
-            <div className={cn('rounded-full grid grid-cols-2 overflow-hidden shadow-inner border border-white/20 absolute opacity-70', isSmall ? 'w-6 h-6' : 'w-14 h-14 sm:w-16 sm:h-16')}>
+            <div
+              className={cn(
+                'rounded-full grid grid-cols-2 overflow-hidden shadow-inner border border-white/20 absolute opacity-70',
+                effectiveSize === 'normal' && 'w-14 h-14 sm:w-16 sm:h-16',
+                effectiveSize === 'medium' && 'w-11 h-11 sm:w-13 sm:h-13',
+                effectiveSize === 'compact' && 'w-8 h-8 sm:w-10 sm:h-10',
+                effectiveSize === 'mini' && 'w-6 h-6 sm:w-7 sm:h-7'
+              )}
+            >
               <div className="bg-red-500" />
               <div className="bg-blue-500" />
               <div className="bg-amber-400" />
               <div className="bg-emerald-500" />
             </div>
-            <span className={cn('relative font-black drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] text-white z-10', isSmall ? 'text-base' : 'text-3xl sm:text-4xl')}>
+            <span
+              className={cn(
+                'relative font-black drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] text-white z-10',
+                effectiveSize === 'normal' && 'text-3xl sm:text-4xl',
+                effectiveSize === 'medium' && 'text-2xl sm:text-3xl',
+                effectiveSize === 'compact' && 'text-xl sm:text-2xl',
+                effectiveSize === 'mini' && 'text-sm sm:text-base'
+              )}
+            >
               +4
             </span>
           </div>
@@ -180,12 +246,12 @@ export const GameCard: React.FC<GameCardProps> = ({
       disabled={!onClick}
       aria-label={`${card.color} ${card.type} ${card.value !== undefined ? card.value : ''}`}
       className={cn(
-        'relative rounded-xl border-2 shadow-lg transition-all duration-200 select-none overflow-hidden cursor-pointer focus:outline-none focus:ring-2 focus:ring-white/80',
+        'relative rounded-xl border-2 shadow-lg transition-all duration-200 select-none overflow-hidden cursor-pointer focus:outline-none focus:ring-2 focus:ring-white/80 shrink-0',
         colorStyles.bg,
         colorStyles.border,
-        isSmall ? 'w-10 h-14 p-1' : 'w-24 h-36 sm:w-28 sm:h-40 p-2',
-        isSelected && '-translate-y-4 ring-4 ring-white shadow-2xl scale-105',
-        isPlayable && !isSelected && 'hover:-translate-y-2 hover:shadow-xl hover:scale-102 cursor-pointer',
+        sizeClasses,
+        isSelected && '-translate-y-5 ring-4 ring-white shadow-2xl scale-110 z-40',
+        isPlayable && !isSelected && 'hover:-translate-y-3 hover:shadow-xl hover:scale-105 cursor-pointer z-30',
         !isPlayable && onClick && 'opacity-60 cursor-not-allowed filter grayscale-[20%]',
         className
       )}
@@ -195,13 +261,21 @@ export const GameCard: React.FC<GameCardProps> = ({
 
       {/* Top Left Corner */}
       <div className="absolute top-1 left-1.5 flex flex-col items-center">
-        <span className={cn('font-black text-white drop-shadow-sm', isSmall ? 'text-[9px]' : 'text-xs sm:text-sm')}>
+        <span
+          className={cn(
+            'font-black text-white drop-shadow-sm',
+            effectiveSize === 'normal' && 'text-xs sm:text-sm',
+            effectiveSize === 'medium' && 'text-[11px] sm:text-xs',
+            effectiveSize === 'compact' && 'text-[9px] sm:text-[10px]',
+            effectiveSize === 'mini' && 'text-[8px]'
+          )}
+        >
           {cornerLabel()}
         </span>
       </div>
 
       {/* Center Oval Emblem */}
-      <div className="absolute inset-x-2 inset-y-3 sm:inset-x-3 sm:inset-y-4 rounded-[40%] bg-black/25 backdrop-blur-[1px] border border-white/20 flex items-center justify-center transform -rotate-12">
+      <div className="absolute inset-x-1.5 inset-y-2.5 sm:inset-x-2.5 sm:inset-y-3.5 rounded-[40%] bg-black/25 backdrop-blur-[1px] border border-white/20 flex items-center justify-center transform -rotate-12">
         <div className="transform rotate-12 flex items-center justify-center">
           {renderContent()}
         </div>
@@ -209,7 +283,15 @@ export const GameCard: React.FC<GameCardProps> = ({
 
       {/* Bottom Right Corner (Inverted) */}
       <div className="absolute bottom-1 right-1.5 flex flex-col items-center transform rotate-180">
-        <span className={cn('font-black text-white drop-shadow-sm', isSmall ? 'text-[9px]' : 'text-xs sm:text-sm')}>
+        <span
+          className={cn(
+            'font-black text-white drop-shadow-sm',
+            effectiveSize === 'normal' && 'text-xs sm:text-sm',
+            effectiveSize === 'medium' && 'text-[11px] sm:text-xs',
+            effectiveSize === 'compact' && 'text-[9px] sm:text-[10px]',
+            effectiveSize === 'mini' && 'text-[8px]'
+          )}
+        >
           {cornerLabel()}
         </span>
       </div>
